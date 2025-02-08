@@ -28,7 +28,7 @@
 #define MY_RS485_SOH_COUNT 3                              // Use this in case of collisions on the bus
 
 #define MY_GATEWAY_ENC28J60                               // Enable gateway ethernet module type 
-#define MY_IP_ADDRESS 192,168,8,70                        // Gateway IP address
+#define MY_IP_ADDRESS 192,168,0,35                        // Gateway IP address
 #define MY_PORT 5003                                      // The port to keep open on node server mode / or port to contact in client mode
 #define MY_MAC_ADDRESS 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEB // Gateway MAC address
 
