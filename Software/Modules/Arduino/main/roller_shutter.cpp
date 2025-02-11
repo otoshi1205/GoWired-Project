@@ -2,55 +2,40 @@
 #include <avr/wdt.h>
 
 
-#ifndef SHUTTER_ID
-#define SHUTTER_ID 0
-#endif
-
-RollerShutter::RollerShutter()
-: Shutter(EEA_SHUTTER_TIME_DOWN, EEA_SHUTTER_TIME_UP, EEA_SHUTTER_POSITION)
-, MsgUP(SHUTTER_ID, V_UP)
-, MsgDOWN(SHUTTER_ID, V_DOWN)
-, MsgSTOP(SHUTTER_ID, V_STOP)
-, MsgPERCENTAGE(0, V_PERCENTAGE)
-, MsgSTATUS(0, V_STATUS) {
-}
-
-#ifdef ROLLER_SHUTTER
-
-void RollerShutter::setup(CommonIOPins& io) {
+void ActiveRollerShutter::setup_impl(CommonIOPins& io) {
     Shutter.SetOutputs( RELAY_OFF, RELAY_1, RELAY_2);
-    io[SHUTTER_ID].SetValues(RELAY_OFF, false, 3, BUTTON_1);
-    io[SHUTTER_ID + 1].SetValues(RELAY_OFF, false, 3, BUTTON_2);
+    io[shutter_id_].SetValues(RELAY_OFF, false, 3, BUTTON_1);
+    io[shutter_id_ + 1].SetValues(RELAY_OFF, false, 3, BUTTON_2);
     if(!Shutter.Calibrated) {
         Shutter.Calibration(UP_TIME, DOWN_TIME);
     }
 }
 
-bool RollerShutter::present() const {
-    return ::present(SHUTTER_ID, S_COVER, "Roller Shutter");
+bool ActiveRollerShutter::present_impl() const {
+    return ::present(shutter_id_, S_COVER, "Roller Shutter");
 }
 
-void RollerShutter::init_confirmation() const {
+void ActiveRollerShutter::init_confirmation_impl() const {
     send(MsgUP.set(0));
-    request(SHUTTER_ID, V_UP);
+    request(shutter_id_, V_UP);
     wait(2000, C_SET, V_UP);
 
     send(MsgDOWN.set(0));
-    request(SHUTTER_ID, V_DOWN);
+    request(shutter_id_, V_DOWN);
     wait(2000, C_SET, V_DOWN);
 
     send(MsgSTOP.set(0));
-    request(SHUTTER_ID, V_STOP);
+    request(shutter_id_, V_STOP);
     wait(2000, C_SET, V_STOP);
 
-    send(MsgPERCENTAGE.setSensor(SHUTTER_ID).set(Shutter.Position));
-    request(SHUTTER_ID, V_PERCENTAGE);
+    send(MsgPERCENTAGE.setSensor(shutter_id_).set(Shutter.Position));
+    request(shutter_id_, V_PERCENTAGE);
     wait(2000, C_SET, V_PERCENTAGE);
 }
 
-bool RollerShutter::handle_msg(const MyMessage& message) {
+bool ActiveRollerShutter::handle_msg_impl(const MyMessage& message) {
 
-    if(message.sensor != SHUTTER_ID) {
+    if(message.sensor != shutter_id_) {
         return false;
     }
 
@@ -83,7 +68,7 @@ bool RollerShutter::handle_msg(const MyMessage& message) {
  * 
  * @param Vcc current uC voltage
  */
-void RollerShutter::calibrate(float Vcc, PowerSensor& power_sensor) {
+void ActiveRollerShutter::calibrate_impl(float Vcc, PowerSensor& power_sensor) {
 
   float Current = 0;
   uint32_t DownTimeCumulated = 0;
@@ -150,7 +135,7 @@ void RollerShutter::calibrate(float Vcc, PowerSensor& power_sensor) {
 
   // Inform Controller about the current state of roller shutter
   send(MsgSTOP);
-  send(MsgPERCENTAGE.setSensor(SHUTTER_ID).set(Shutter.Position));
+  send(MsgPERCENTAGE.setSensor(shutter_id_).set(Shutter.Position));
   #ifdef RS485_DEBUG
     send(MsgDEBUG.set("DownTime ; UpTime"));
     send(MsgCUSTOM.set(DownTime)); send(MsgCUSTOM.set(UpTime));
@@ -162,7 +147,7 @@ void RollerShutter::calibrate(float Vcc, PowerSensor& power_sensor) {
  * @brief Updates shutter condition, informs controller about shutter condition and position
  * 
  */
-void RollerShutter::update(float Current) {
+void ActiveRollerShutter::update_impl(float Current) {
 
   uint32_t StopTime = 0;
   uint32_t MeasuredTime;
@@ -200,13 +185,13 @@ void RollerShutter::update(float Current) {
     Direction = Shutter.State;
     Shutter.NewState = (uint8_t)State::STOP;
     Shutter.Movement();
-    send(MsgSTOP.setSensor(SHUTTER_ID));
+    send(MsgSTOP.setSensor(shutter_id_));
 
     MeasuredTime = StopTime - StartTime;
     Shutter.CalculatePosition(Direction, MeasuredTime);
     EEPROM.put(EEA_SHUTTER_POSITION, Shutter.Position);
   
-    send(MsgPERCENTAGE.setSensor(SHUTTER_ID).set(Shutter.Position));
+    send(MsgPERCENTAGE.setSensor(shutter_id_).set(Shutter.Position));
   
     if(TempState != State::STOP)  {
       wait(500);
@@ -216,20 +201,19 @@ void RollerShutter::update(float Current) {
   }
 }
 
-void RollerShutter::start() {
+void ActiveRollerShutter::start_impl() {
   Shutter.Movement();
   StartTime = millis();
-  Shutter.NewState == (uint8_t)State::UP ? send(MsgUP.setSensor(SHUTTER_ID)) : send(MsgDOWN.setSensor(SHUTTER_ID));
+  Shutter.NewState == (uint8_t)State::UP ? send(MsgUP.setSensor(shutter_id_)) : send(MsgDOWN.setSensor(shutter_id_));
   wait(500);
 }
 
-void RollerShutter::stop() {
+void ActiveRollerShutter::stop_impl() {
     Shutter.NewState = (uint8_t)State::STOP;
     update(0);
 }
 
-
-void RollerShutter::update_io(CommonIO& io_pin, size_t idx) {
+void ActiveRollerShutter::update_io_impl(CommonIO& io_pin, size_t idx) {
     if(io_pin.NewState != 2) {
         MovementTime = Shutter.ReadButtons(idx) * 1000;
         io_pin.State = io_pin.NewState;
@@ -240,19 +224,3 @@ void RollerShutter::update_io(CommonIO& io_pin, size_t idx) {
         io_pin.NewState = io_pin.State;
     }
 }
-
-#else
-
-//Stub implementations
-
-void RollerShutter::setup(CommonIOPins& io) {}
-bool RollerShutter::present() const {return false;}
-void RollerShutter::init_confirmation() const {}
-bool RollerShutter::handle_msg(const MyMessage& message) {return false;}
-void RollerShutter::calibrate(float Vcc, PowerSensor& power_sensor) {}
-void RollerShutter::update(float Current) {}
-void RollerShutter::start() {}
-void RollerShutter::stop() {}
-void RollerShutter::update_io(CommonIO& io_pin, size_t idx) {}
-
-#endif

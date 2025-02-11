@@ -59,7 +59,11 @@ MyMessage MsgTEMP(0, V_TEMP);
 MyMessage MsgHUM(0, V_HUM);
 MyMessage MsgTEXT(0, V_TEXT);
 
-RollerShutter roller_shutter;
+#ifndef SHUTTER_ID
+#define SHUTTER_ID 0
+#endif
+
+RollerShutter roller_shutter(SHUTTER_ID);
 
 // Dimmer
 #if defined(DIMMER) || defined(RGB) || defined(RGBW)
