@@ -24,6 +24,8 @@
 #include "Configuration.h"
 #include <GoWired.h>
 #include "roller_shutter.h"
+#include "light_dimmer.h"
+
 #ifdef SHT30
   #include <SHTSensor.h>
 #elif defined(DHT22)
@@ -62,15 +64,12 @@ MyMessage MsgTEXT(0, V_TEXT);
 #ifndef SHUTTER_ID
 #define SHUTTER_ID 0
 #endif
+#ifndef DIMMER_ID
+#define DIMMER_ID 0
+#endif
 
 RollerShutter roller_shutter(SHUTTER_ID);
-
-// Dimmer
-#if defined(DIMMER) || defined(RGB) || defined(RGBW)
-  Dimmer Dimmer;
-  MyMessage MsgRGB(DIMMER_ID, V_RGB);
-  MyMessage MsgRGBW(DIMMER_ID, V_RGBW);
-#endif
+LightDimmer dimmer(DIMMER_ID);
 
 // Power sensor constructor
 #if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
@@ -141,6 +140,7 @@ void setup() {
   #endif
 
     roller_shutter.setup(common_io);
+    dimmer.setup(common_io);
 
   #ifdef FOUR_RELAY
     common_io[RELAY_ID_1].SetValues(RELAY_OFF, 2, RELAY_1);
@@ -148,20 +148,7 @@ void setup() {
     common_io[RELAY_ID_3].SetValues(RELAY_OFF, 2, RELAY_3);
     common_io[RELAY_ID_4].SetValues(RELAY_OFF, 2, RELAY_4);
   #endif
-
-  #if defined(DIMMER) || defined(RGB) || defined(RGBW)
-    common_io[0].SetValues(0, false, 3, BUTTON_1);
-    common_io[1].SetValues(0, false, 3, BUTTON_2);
-  #endif
-
-  #ifdef DIMMER
-    Dimmer.SetValues(NUMBER_OF_CHANNELS, DIMMING_STEP, DIMMING_INTERVAL, LED_PIN_1, LED_PIN_2, LED_PIN_3, LED_PIN_4);
-  #elif defined(RGB)
-    Dimmer.SetValues(NUMBER_OF_CHANNELS, DIMMING_STEP, DIMMING_INTERVAL, LED_PIN_1, LED_PIN_2, LED_PIN_3);
-  #elif defined(RGBW)
-    Dimmer.SetValues(NUMBER_OF_CHANNELS, DIMMING_STEP, DIMMING_INTERVAL, LED_PIN_1, LED_PIN_2, LED_PIN_3, LED_PIN_4);
-  #endif
-
+  
   // INPUT
   #ifdef INPUT_1
     #ifdef PULLUP_1
@@ -225,6 +212,10 @@ void presentation() {
 
     if (roller_shutter.present()) {
         wait(PRESENTATION_DELAY);
+    }
+
+    if (dimmer.present()) {
+        wait(PRESENTATION_DELAY);
     }  
 
   #ifdef FOUR_RELAY
@@ -232,18 +223,6 @@ void presentation() {
     present(RELAY_ID_2, S_BINARY, "Relay 2");   wait(PRESENTATION_DELAY);
     present(RELAY_ID_3, S_BINARY, "Relay 3");   wait(PRESENTATION_DELAY);
     present(RELAY_ID_4, S_BINARY, "Relay 4");   wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef DIMMER
-    present(DIMMER_ID, S_DIMMER, "Dimmer"); wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef RGB
-    present(DIMMER_ID, S_RGB_LIGHT, "RGB"); wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef RGBW
-    present(DIMMER_ID, S_RGBW_LIGHT, "RGBW");   wait(PRESENTATION_DELAY);
   #endif
 
   // DIGITAL INPUT
@@ -332,6 +311,7 @@ void InitConfirmation() {
   #endif
 
     roller_shutter.init_confirmation();
+    dimmer.init_confirmation();
 
   #ifdef FOUR_RELAY
     send(MsgSTATUS.setSensor(RELAY_ID_1).set(common_io[RELAY_ID_1].NewState));
@@ -349,26 +329,6 @@ void InitConfirmation() {
     send(MsgSTATUS.setSensor(RELAY_ID_4).set(common_io[RELAY_ID_4].NewState));
     request(RELAY_ID_4, V_STATUS);
     wait(2000, C_SET, V_STATUS);
-  #endif
-
-  #if defined(DIMMER) || defined(RGB) || defined(RGBW)
-    send(MsgSTATUS.setSensor(DIMMER_ID).set(false));
-    request(DIMMER_ID, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-    
-    send(MsgPERCENTAGE.setSensor(DIMMER_ID).set(Dimmer.NewDimmingLevel));
-    request(DIMMER_ID, V_PERCENTAGE);
-    wait(2000, C_SET, V_PERCENTAGE);
-  #endif
-
-  #ifdef RGB
-    send(MsgRGB.setSensor(DIMMER_ID).set("ffffff"));
-    request(DIMMER_ID, V_RGB);
-    wait(2000, C_SET, V_RGB);
-  #elif defined(RGBW)
-    send(MsgRGBW.setSensor(DIMMER_ID).set("ffffffff"));
-    request(DIMMER_ID, V_RGBW);
-    wait(2000, C_SET, V_RGBW);
   #endif
 
   // DIGITAL INPUT
@@ -445,6 +405,9 @@ void receive(const MyMessage &message)  {
   if (roller_shutter.handle_msg(message)) {
     return;
   }
+  if (dimmer.handle_msg(message)) {
+    return;
+  }
   if (message.type == V_STATUS) {
     #if defined(POWER_SENSOR) && defined(ERROR_REPORTING)
       if (message.sensor == ES_ID)  {
@@ -467,11 +430,6 @@ void receive(const MyMessage &message)  {
         // Ignore this message
       }
     #endif
-    #if defined(DIMMER) || defined(RGB) || defined(RGBW)
-      if (message.sensor == DIMMER_ID) {
-        Dimmer.ChangeState(message.getBool());
-      }
-    #endif
     #if defined(DOUBLE_RELAY)
       if (message.sensor == RELAY_ID_1 || message.sensor == RELAY_ID_2)  {
         if (!OVERCURRENT_ERROR[0] && !THERMAL_ERROR) {
@@ -490,24 +448,6 @@ void receive(const MyMessage &message)  {
             }
           }
         }
-      }
-    #endif
-  }
-  else if (message.type == V_PERCENTAGE) {
-    #if defined(DIMMER) || defined(RGB) || defined(RGBW)
-      if(message.sensor == DIMMER_ID) {
-        Dimmer.NewDimmingLevel = atoi(message.data);
-        Dimmer.NewDimmingLevel = Dimmer.NewDimmingLevel > 100 ? 100 : Dimmer.NewDimmingLevel;
-        Dimmer.NewDimmingLevel = Dimmer.NewDimmingLevel < 0 ? 0 : Dimmer.NewDimmingLevel;
-      }
-    #endif
-  }
-  else if (message.type == V_RGB || message.type == V_RGBW) {
-    #if defined(RGB) || defined(RGBW)
-      if(message.sensor == DIMMER_ID) {
-        const char *rgbvalues = message.getString();
-
-        Dimmer.NewColorValues(rgbvalues);
       }
     #endif
   }
@@ -637,36 +577,10 @@ void UpdateIO() {
         break;
       case 3:
         // Button input
-        #ifdef DIMMER_ID
-          if(i == 0)  {
-            if(common_io[i].NewState != 2) {
-              // Change dimmer state
-              Dimmer.ChangeState(!Dimmer.CurrentState);
-              send(MsgSTATUS.setSensor(DIMMER_ID).set(Dimmer.CurrentState));
-              common_io[i].State = common_io[i].NewState;
-            }
-            if(common_io[i].NewState == 2) {
-              #ifdef SPECIAL_BUTTON
-                send(MsgSTATUS.setSensor(SPECIAL_BUTTON_ID).set(true));
-              #endif
-              common_io[i].NewState = common_io[i].State;
-            }
-          }
-          else if(i == 1) {
-            if(common_io[i].NewState != 2)  {
-              if(!Dimmer.CurrentState) continue;
-                    
-              // Toggle dimming level by DIMMING_TOGGLE_STEP
-              Dimmer.NewDimmingLevel += DIMMING_TOGGLE_STEP;
-              Dimmer.NewDimmingLevel = Dimmer.NewDimmingLevel > 100 ? DIMMING_TOGGLE_STEP : Dimmer.NewDimmingLevel;
-              send(MsgPERCENTAGE.setSensor(DIMMER_ID).set(Dimmer.NewDimmingLevel));
-              common_io[i].NewState = common_io[i].State;
-            }
-          }
-        #endif
-        #ifdef ROLLER_SHUTTER
-          roller_shutter.update_io(common_io[i], i);
-        #endif
+        roller_shutter.update_io(common_io[i], i);
+        if (!dimmer.update_io(common_io[i], i)) {
+            continue;
+        }
         break;
       case 4:
         // Button input + Relay output
@@ -699,7 +613,7 @@ void UpdateIO() {
  * @param Current current measured by sensor 
  * @param Sensor sensor ID if more than one sensor is attached
  */
-void PSUpdate(float Current, uint8_t Sensor = 0)  {
+void PSUpdate(float Current, [[maybe_unused]] uint8_t Sensor = 0)  {
 
   if(Current == 0 && PS.OldValue == 0)  return;
   else if(Current < 1 && (abs(PS.OldValue - Current) < 0.1)) return;
@@ -761,11 +675,8 @@ void loop() {
       if (digitalRead(RELAY_1) == RELAY_ON || digitalRead(RELAY_2) == RELAY_ON)  {
         Current = PS.MeasureAC(Vcc);
       }
-    #elif defined(DIMMER) || defined(RGB) || defined(RGBW)
-      if (Dimmer.CurrentState)  {
-        Current = PS.MeasureDC(Vcc);
-      }
     #endif
+        Current = dimmer.measure_current(Vcc, PS);
       
     #ifdef ERROR_REPORTING
       OVERCURRENT_ERROR[0] = PS.ElectricalStatus(Current);
@@ -816,12 +727,9 @@ void loop() {
             common_io[i].SetRelay();
             send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
           }
-        #elif defined(ROLLER_SHUTTER)
+        #else
           roller_shutter.stop();
-        #elif defined(DIMMER) || defined(RGB) || defined(RGBW)
-          //Dimmer.NewState = false;
-          Dimmer.ChangeState(false);
-          send(MsgSTATUS.setSensor(DIMMER_ID).set(Dimmer.CurrentState));
+          dimmer.alert();
         #endif
 
         send(MsgSTATUS.setSensor(ES_ID).set(OVERCURRENT_ERROR[0]));
@@ -850,12 +758,9 @@ void loop() {
           common_io[i].SetRelay();
           send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
         }
-      #elif defined(ROLLER_SHUTTER)
+      #else
         roller_shutter.stop();
-      #elif defined(DIMMER) || defined(RGB) || defined(RGBW)
-        //Dimmer.NewState = false;
-        Dimmer.ChangeState(false);
-        send(MsgSTATUS.setSensor(DIMMER_ID).set(Dimmer.CurrentState));
+        dimmer.alert();
       #endif
       send(MsgSTATUS.setSensor(TS_ID).set(THERMAL_ERROR));
       InformControllerTS = true;
@@ -873,13 +778,8 @@ void loop() {
   }
 
   // Updating roller shutter
-  #ifdef ROLLER_SHUTTER
     roller_shutter.update(Current);
-  #endif
-
-  #if defined(DIMMER) || defined(RGB) || defined(RGBW)
-    Dimmer.UpdateDimmer();
-  #endif
+    dimmer.update();
 
   // Reset LastUpdate if millis() has overflowed
   if(LastUpdate > millis()) {

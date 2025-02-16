@@ -1,6 +1,13 @@
 #include "roller_shutter.h"
 #include <avr/wdt.h>
 
+#ifndef RELAY_1
+#define RELAY_1 0
+#endif
+
+#ifndef RELAY_2
+#define RELAY_2 0
+#endif
 
 void ActiveRollerShutter::setup_impl(CommonIOPins& io) {
     Shutter.SetOutputs( RELAY_OFF, RELAY_1, RELAY_2);
@@ -15,7 +22,7 @@ bool ActiveRollerShutter::present_impl() const {
     return ::present(shutter_id_, S_COVER, "Roller Shutter");
 }
 
-void ActiveRollerShutter::init_confirmation_impl() const {
+void ActiveRollerShutter::init_confirmation_impl() {
     send(MsgUP.set(0));
     request(shutter_id_, V_UP);
     wait(2000, C_SET, V_UP);
@@ -41,7 +48,7 @@ bool ActiveRollerShutter::handle_msg_impl(const MyMessage& message) {
 
     switch (message.type)
     {
-    case V_PERCENTAGE:
+    case V_PERCENTAGE: {
         int NewPosition = atoi(message.data);
         NewPosition = NewPosition > 100 ? 100 : NewPosition;
         NewPosition = NewPosition < 0 ? 0 : NewPosition;
@@ -49,6 +56,7 @@ bool ActiveRollerShutter::handle_msg_impl(const MyMessage& message) {
         //ShutterUpdate(0);
         MovementTime = Shutter.ReadNewPosition(NewPosition) * 10;
         return true;
+    }
     case V_UP:
         MovementTime = Shutter.ReadMessage(0) * 1000;
         return true;
@@ -58,9 +66,8 @@ bool ActiveRollerShutter::handle_msg_impl(const MyMessage& message) {
     case V_STOP:
         MovementTime = Shutter.ReadMessage(2);
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 
 /**

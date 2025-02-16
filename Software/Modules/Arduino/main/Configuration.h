@@ -36,6 +36,10 @@
 //#define RGB                       // Define this node as a RGB dimmer node, setting below
 //#define RGBW                      // Define this node as a RGBW dimmer node, setting below
 
+#if (defined(DOUBLE_RELAY) + defined(ROLLER_SHUTTER) + defined(FOUR_RELAY) + defined(DIMMER) + defined(RGB) + defined(RGBW)) != 1
+    #error "Exactly one of DOUBLE_RELAY, ROLLER_SHUTTER, FOUR_RELAY, DIMMER, RGB, or RGBW must be defined!"
+#endif
+
 // Input Config - define according to your needs
 // Digital Inputs
 #define INPUT_1
@@ -177,6 +181,7 @@
   #define LED_PIN_1 OUTPUT_PIN_4
   #define LED_PIN_2 OUTPUT_PIN_1
   #define LED_PIN_3 OUTPUT_PIN_2
+  #define LED_PIN_4 OUTPUT_PIN_3
   #define BUTTON_1 INPUT_PIN_1
   #define BUTTON_2 INPUT_PIN_2
   #define NUMBER_OF_CHANNELS 3
@@ -208,38 +213,33 @@
 #ifdef INPUT_1
   #define INPUT_ID_1 FIRST_INPUT_ID
   #define PIN_1 INPUT_PIN_3
-  #define PULLUP_1
+  #define PULLUP_1 1
   #define INVERT_1 false
-  #define NUMBER_OF_INPUTS 1
 #endif
 
 #ifdef INPUT_2
   #define INPUT_ID_2 INPUT_ID_1+1
   #define PIN_2 INPUT_PIN_4
-  #define PULLUP_2
+  #define PULLUP_2 1
   #define INVERT_2 false
-  #define NUMBER_OF_INPUTS 2
 #endif
 
 #ifdef INPUT_3
   #define INPUT_ID_3 INPUT_ID_2+1
   #define PIN_3 INPUT_PIN_5
-  #define PULLUP_3
+  #define PULLUP_3 1
   #define INVERT_3 false
-  #define NUMBER_OF_INPUTS 3
 #endif
 
 #ifdef INPUT_4
   #define INPUT_ID_4 INPUT_ID_3+1
   #define PIN_4 INPUT_PIN_6
-  #define PULLUP_4
+  #define PULLUP_4 1
   #define INVERT_4 false
-  #define NUMBER_OF_INPUTS 4
 #endif
 
-#ifndef NUMBER_OF_INPUTS
-  #define NUMBER_OF_INPUTS 0
-#endif
+// Sum up the defined values
+#define NUMBER_OF_INPUTS (PULLUP_1 + PULLUP_2 + PULLUP_3 + PULLUP_4)
 
 // Special Button
 #ifdef BUTTON_1

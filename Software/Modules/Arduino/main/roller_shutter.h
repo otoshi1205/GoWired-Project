@@ -1,5 +1,4 @@
-#ifndef ROLLER_SHUTTER_H
-#define ROLLER_SHUTTER_H
+#pragma once
 
 #include "custom_types.h"
 
@@ -26,8 +25,8 @@ public:
     bool present() const {
         return static_cast<const Derived*>(this)->present_impl();
     }
-    void init_confirmation() const {
-        static_cast<const Derived*>(this)->init_confirmation_impl();
+    void init_confirmation() {
+        static_cast<Derived*>(this)->init_confirmation_impl();
     }
     bool handle_msg(const MyMessage& message) {
         return static_cast<Derived*>(this)->handle_msg_impl(message);
@@ -72,7 +71,7 @@ public:
     ActiveRollerShutter(int shutterId) : RollerShutterBase(shutterId) {}
     void setup_impl(CommonIOPins& io);
     bool present_impl() const;
-    void init_confirmation_impl() const;
+    void init_confirmation_impl();
     bool handle_msg_impl(const MyMessage& message);
     void calibrate_impl(float Vcc, PowerSensor& power_sensor);
     void update_impl(float Current);
@@ -86,7 +85,7 @@ public:
     StubRollerShutter(int shutterId) : RollerShutterBase(shutterId) {}
     void setup_impl(CommonIOPins&) {}
     bool present_impl() const { return false; }
-    void init_confirmation_impl() const {}
+    void init_confirmation_impl() {}
     bool handle_msg_impl(const MyMessage&) { return false; }
     void calibrate_impl(float, PowerSensor&) {}
     void update_impl(float) {}
@@ -99,6 +98,4 @@ public:
 using RollerShutter = ActiveRollerShutter;
 #else
 using RollerShutter = StubRollerShutter;
-#endif
-
 #endif
