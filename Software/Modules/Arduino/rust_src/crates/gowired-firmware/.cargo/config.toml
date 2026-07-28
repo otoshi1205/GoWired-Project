@@ -1,0 +1,26 @@
+# AVR is a tier-3 target, so `core` has to be built from source and there is no
+# prebuilt std. This config applies when cargo is invoked from *this directory*,
+# which is why the workspace root can still run `cargo test` on the host.
+#
+#     cd crates/gowired-firmware
+#     cargo build --release --no-default-features --features device-double-relay
+#
+# `tools/gowired-rs.py` does that for you, and overrides `target-cpu` for the
+# 328PB via the RUSTFLAGS environment variable -- which takes precedence over
+# `build.rustflags` below.
+
+[build]
+target = "avr-none"
+rustflags = [
+    # The default part. Override with RUSTFLAGS for the 328PB.
+    "-C", "target-cpu=atmega328p",
+]
+
+[unstable]
+build-std = ["core"]
+
+[target.avr-none]
+# avr-gcc is the linker. It comes with the Arduino toolchain:
+#   ~/.arduino15/packages/arduino/tools/avr-gcc/*/bin
+# Put it on PATH, or point at it here.
+linker = "avr-gcc"

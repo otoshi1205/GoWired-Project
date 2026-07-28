@@ -1,0 +1,9 @@
+# AVR is a tier-3 target: it ships no precompiled core, so `-Z build-std` and
+# therefore a nightly compiler are mandatory. Pinned rather than floating
+# because the AVR backend is the part of rustc most likely to regress, and
+# because `avr-none` replaced the older `avr-unknown-gnu-atmega328` target
+# spec -- a toolchain either side of that change needs different flags.
+[toolchain]
+channel = "nightly-2026-07-27"
+components = ["rust-src", "rustfmt", "clippy"]
+targets = []

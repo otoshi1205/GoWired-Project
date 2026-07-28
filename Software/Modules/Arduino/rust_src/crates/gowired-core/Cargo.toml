@@ -1,0 +1,41 @@
+[package]
+name = "gowired-core"
+description = "GoWired module behaviour and MySensors protocol. no_std, no hardware."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Host-side fakes for every HAL trait. Enabled automatically for the crate's
+# own tests; the firmware never turns it on.
+testing = []
+
+[lints.rust]
+missing_docs = "warn"
+# `deny`, not `forbid`: text.rs needs one unsafe block to read a string out of
+# flash with lpm, and that module opts back in explicitly. Nothing else may.
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# The domain layer speaks in u8 sensor ids and percentages and converts between
+# them constantly; these three fire on almost every line of honest AVR code.
+cast_possible_truncation = "allow"
+cast_lossless = "allow"
+cast_precision_loss = "allow"
+# Fixed-point firmware is made of width conversions: milliamps to watts, ADC
+# counts to tenths of a degree, mantissa bits to exponents. Flagging every one of
+# them buries the handful that matter. The ones that *could* wrap on real input
+# saturate explicitly and are covered by tests -- see domain::sensing and
+# proto::fixed.
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+# "MySensors", "GoWired" and "ATmega328P" are proper nouns, not code.
+doc_markdown = "allow"
+# Every accessor on a state machine is a must_use candidate; saying so 40 times
+# does not make the code safer.
+must_use_candidate = "allow"
+# `Features` is a set of independent hardware-present flags. Bundling them into
+# a bitfield to satisfy a lint would make the call sites worse.
+struct_excessive_bools = "allow"

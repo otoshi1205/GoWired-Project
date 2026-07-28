@@ -1,0 +1,26 @@
+# YOU PROBABLY DO NOT NEED THIS FILE.
+#
+# This sketch requires C++17, and MiniCore -- the core this hardware is
+# programmed with -- already compiles at -std=gnu++17. If you follow
+# BUILDING.md, there is nothing to install.
+#
+# This file exists only for the case where you build with the stock
+# `arduino:avr` core instead, which still fixes the standard at -std=gnu++11.
+# Note that core supports neither the ATmega328PB variant nor an 8 MHz external
+# clock on a 328P out of the box, so it is not a route to firmware you can
+# actually flash to a GoWired MCU -- it is useful for compile-checking only.
+#
+# To use it, copy this file into that core's directory, next to platform.txt:
+#
+#   Linux    ~/.arduino15/packages/arduino/hardware/avr/<version>/
+#   macOS    ~/Library/Arduino15/packages/arduino/hardware/avr/<version>/
+#   Windows  %LOCALAPPDATA%\Arduino15\packages\arduino\hardware\avr\<version>\
+#
+# and restart the IDE. It raises the language standard only.
+#
+# Do NOT achieve the same thing on MiniCore with
+#   --build-property compiler.cpp.extra_flags=-std=gnu++17
+# because that property is where MiniCore's LTO menu puts -flto. Overriding it
+# silently disables link-time optimisation and costs about 2 kB of flash.
+
+compiler.cpp.extra_flags=-std=gnu++17

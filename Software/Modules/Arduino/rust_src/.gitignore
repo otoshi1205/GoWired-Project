@@ -1,0 +1,6 @@
+# Cargo build tree. Large: it holds a from-source build of `core` for AVR.
+/target/
+
+# Compiled by tools/golden/README.md's instructions, for regenerating the
+# reference frames. Not needed to build or test the firmware.
+/tools/golden/gen

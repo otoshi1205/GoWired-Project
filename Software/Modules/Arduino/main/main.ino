@@ -3,7 +3,7 @@
  * home automation easy and affordable for every home automation enthusiast. GoWired provides
  * hardware, software, enclosures and instructions necessary to build your own bus communicating
  * smart home installation.
- * 
+ *
  * GoWired is based on RS485 industrial communication standard. The software uses MySensors
  * communication protocol (http://www.mysensors.org).
  *
@@ -15,793 +15,203 @@
  * version 3 as published by the Free Software Foundation.
  *
  * ******************************
- * This is source code for GoWired MCU working with 2SSR, RGBW & 4RelayDin Shields.
- * 
- * 
+ * Source code for GoWired MCU working with 2SSR, RGBW & 4RelayDin shields.
+ *
+ * This sketch is only wiring. All behaviour lives in src/domain, which knows
+ * nothing about Arduino or MySensors and is unit tested on the host -- see
+ * test/README.md. src/platform holds the ATmega328P and MySensors adapters.
+ *
+ * NOTE: requires -std=gnu++17. See platform.local.txt in this folder.
  */
 
-/***** INCLUDES *****/
 #include "Configuration.h"
+
 #include <GoWired.h>
-#include "roller_shutter.h"
-#include "light_dimmer.h"
 
-#ifdef SHT30
-  #include <SHTSensor.h>
-#elif defined(DHT22)
-  #include <dht.h>
+#include "src/domain/dimmer_device.h"
+#include "src/domain/input_bank.h"
+#include "src/domain/module.h"
+#include "src/domain/relay_bank_device.h"
+#include "src/domain/roller_shutter_device.h"
+#include "src/platform/avr_hal.h"
+#include "src/platform/avr_sensors.h"
+#include "src/platform/external_probe.h"
+#include "src/platform/mysensors_bus.h"
+
+// ---------------------------------------------------------------------------
+// Hardware
+// ---------------------------------------------------------------------------
+
+gw::AvrGpio Gpio;
+gw::AvrPwm Pwm;
+gw::AvrClock Clock;
+gw::AvrStore Store;
+gw::AvrWatchdog Watchdog;
+gw::AvrVoltageReference Vref;
+gw::MySensorsBus Bus;
+
+// ---------------------------------------------------------------------------
+// Device selection -- the ONE compile-time branch in the sketch.
+//
+// The six board variants are mutually exclusive, so only the selected one is
+// named here. That keeps the unselected devices, their vtables and their
+// dependencies out of the binary: the IDevice abstraction is paid for in
+// source, not in flash.
+//
+// Note DOUBLE_RELAY/FOUR_RELAY share RelayBankDevice and DIMMER/RGB/RGBW share
+// DimmerDevice -- six variants, three implementations.
+// ---------------------------------------------------------------------------
+
+#if GW_DEVICE == GW_DOUBLE_RELAY || GW_DEVICE == GW_FOUR_RELAY
+
+constexpr gw::RelayBankSpec kDeviceSpec = {
+    /* relay_count     */ gw::output_count(cfg::kDevice),
+    /* relay_pins      */ {cfg::relay_pin(0), cfg::relay_pin(1), cfg::relay_pin(2),
+                           cfg::relay_pin(3)},
+    /* button_count    */ gw::button_count(cfg::kDevice),
+    /* button_pins     */ {cfg::kButtonPin1, cfg::kButtonPin2},
+    /* off_level       */ cfg::kRelayOffLevel,
+    /* per_relay_power */ cfg::kDevice == gw::DeviceKind::FourRelay,
+};
+
+gw::RelayBankDevice Device(Gpio, Clock, kDeviceSpec, cfg::kButtons, cfg::kFeatures.special_button);
+
+#elif GW_DEVICE == GW_ROLLER_SHUTTER
+
+constexpr gw::RollerShutterDevice::Spec kDeviceSpec = {
+    /* pins */ {cfg::relay_pin(0), cfg::relay_pin(1), cfg::kRelayOffLevel},
+    /* button_pins           */ {cfg::kButtonPin1, cfg::kButtonPin2},
+    /* current_floor         */ cfg::kShutter.calibration_current_floor,
+    /* calibration_samples   */ cfg::kShutter.calibration_samples,
+    /* default_up_time_s     */ cfg::kShutter.up_time_s,
+    /* default_down_time_s   */ cfg::kShutter.down_time_s,
+    /* current_sensing       */ cfg::kPowerSensor,
+};
+
+gw::RollerShutterDevice Device(Gpio, Clock, Store, kDeviceSpec, cfg::kStore, cfg::kButtons,
+                              cfg::kFeatures.special_button);
+
+#else // GW_DIMMER / GW_RGB / GW_RGBW
+
+constexpr gw::DimmerDevice::Spec kDeviceSpec = {
+    /* model     */ cfg::color_model(),
+    /* led_pins  */ {cfg::led_pin(0), cfg::led_pin(1), cfg::led_pin(2), cfg::led_pin(3)},
+    /* button_pins */ {cfg::kButtonPin1, cfg::kButtonPin2},
+};
+
+gw::DimmerDevice Device(Pwm, Gpio, Clock, kDeviceSpec, cfg::kDimmer, cfg::kButtons,
+                        cfg::kFeatures.special_button);
+
 #endif
 
-/***** Globals *****/
+// ---------------------------------------------------------------------------
+// Generic digital inputs
+// ---------------------------------------------------------------------------
 
-// Timer
-uint32_t LastUpdate = 0;               // Time of last update of interval sensors
-bool CheckNow = false;
+gw::InputBank Inputs(Gpio, Clock, cfg::kInputs, cfg::kButtons.debounce_ms);
 
-// Module Safety Indicators
-bool THERMAL_ERROR = false;                 // Thermal error status
-bool InformControllerTS = false;            // Was controller informed about error?
-bool OVERCURRENT_ERROR[4] = {false, false, false, false};             // Overcurrent error status
-bool InformControllerES = false;            // Was controller informed about error?
-uint8_t ET_ERROR = 3;                       // External thermometer status (0 - ok, 1 - checksum error, 2 - timeout error, 3 - default/initialization)
+// ---------------------------------------------------------------------------
+// Optional peripherals
+// ---------------------------------------------------------------------------
 
-// Initialization
-bool InitConfirm = false;
-
-/***** Constructors *****/
-// CommonIo constructor
-#if (NUMBER_OF_RELAYS + NUMBER_OF_INPUTS > 0)
-  CommonIOPins common_io;
+// Only the channels this board actually has: four ACS712s on 4RelayDin, one
+// everywhere else. Sizing this unconditionally at 4 wasted 66 bytes of SRAM.
+#if GW_DEVICE == GW_FOUR_RELAY
+gw::AvrCurrentSensor CurrentSensors[4] = {
+    {cfg::current_sense_pin(0), cfg::kPower},
+    {cfg::current_sense_pin(1), cfg::kPower},
+    {cfg::current_sense_pin(2), cfg::kPower},
+    {cfg::current_sense_pin(3), cfg::kPower},
+};
+#else
+gw::AvrCurrentSensor CurrentSensors[1] = {
+    {cfg::current_sense_pin(0), cfg::kPower},
+};
 #endif
 
-MyMessage MsgSTATUS(0, V_STATUS);
-MyMessage MsgPERCENTAGE(0, V_PERCENTAGE);
-MyMessage MsgWATT(0, V_WATT);
-MyMessage MsgTEMP(0, V_TEMP);
-MyMessage MsgHUM(0, V_HUM);
-MyMessage MsgTEXT(0, V_TEXT);
+gw::AvrInternalTemperature InternalTemperature(cfg::kInternalTempPin, cfg::kThermal);
 
-#ifndef SHUTTER_ID
-#define SHUTTER_ID 0
-#endif
-#ifndef DIMMER_ID
-#define DIMMER_ID 0
+#if defined(GW_PROBE_SHT30)
+gw::ExternalProbe ExternalTemperatureProbe;
+#elif defined(GW_PROBE_DHT22)
+gw::ExternalProbe ExternalTemperatureProbe(cfg::kOneWire);
 #endif
 
-RollerShutter roller_shutter(SHUTTER_ID);
-LightDimmer dimmer(DIMMER_ID);
+gw::Peripherals make_peripherals()
+{
+    gw::Peripherals p;
 
-// Power sensor constructor
-#if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
-  PowerSensor PS;
-#elif defined(POWER_SENSOR) && defined(FOUR_RELAY)
-  PowerSensor PS[NUMBER_OF_RELAYS];
-#endif
-
-// Internal thermometer constructor
-#ifdef INTERNAL_TEMP
-  AnalogTemp AnalogTemp(IT_PIN, MAX_TEMPERATURE, MVPERC, ZEROVOLTAGE);
-#endif
-
-// External thermometer constructor
-#ifdef EXTERNAL_TEMP
-  #ifdef DHT22
-    dht DHT;
-  #endif
-  #ifdef SHT30
-    SHTSensor sht;
-  #endif
-#endif
-
-#ifdef RS485_DEBUG
-  MyMessage MsgDEBUG(DEBUG_ID, V_TEXT);
-  MyMessage MsgDEBUG2(DEBUG_ID, V_WATT);
-  MyMessage MsgCUSTOM(0, V_CUSTOM);
-#endif
-
-/**
- * @brief Function called before setup(); resets wdt
- * 
- */
-void before() {
-  #ifdef ENABLE_WATCHDOG
-    wdt_reset();
-    MCUSR = 0;
-    wdt_disable();
-  #endif
-}
-
-/**
- * @brief Setups software components: wdt, expander, inputs, outputs
- * 
- */
-void setup() {
-
-  #ifdef ENABLE_WATCHDOG
-    wdt_enable(WDTO_8S);
-  #endif
-
-  float Vcc = ReadVcc();  // mV
-
-  // POWER SENSOR
-  #if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
-    PS.SetValues(PS_PIN, MVPERAMP, RECEIVER_VOLTAGE, MAX_CURRENT, POWER_MEASURING_TIME, Vcc);
-  #elif defined(POWER_SENSOR) && defined(FOUR_RELAY)
-    PS[RELAY_ID_1].SetValues(PS_PIN_1, MVPERAMP, RECEIVER_VOLTAGE, MAX_CURRENT, POWER_MEASURING_TIME, Vcc);
-    PS[RELAY_ID_2].SetValues(PS_PIN_2, MVPERAMP, RECEIVER_VOLTAGE, MAX_CURRENT, POWER_MEASURING_TIME, Vcc);
-    PS[RELAY_ID_3].SetValues(PS_PIN_3, MVPERAMP, RECEIVER_VOLTAGE, MAX_CURRENT, POWER_MEASURING_TIME, Vcc);
-    PS[RELAY_ID_4].SetValues(PS_PIN_4, MVPERAMP, RECEIVER_VOLTAGE, MAX_CURRENT, POWER_MEASURING_TIME, Vcc);
-  #endif
-
-  // OUTPUT
-  #ifdef DOUBLE_RELAY
-    common_io[RELAY_ID_1].SetValues(RELAY_OFF, false, 4, BUTTON_1, RELAY_1);
-    common_io[RELAY_ID_2].SetValues(RELAY_OFF, false, 4, BUTTON_2, RELAY_2);
-  #endif
-
-    roller_shutter.setup(common_io);
-    dimmer.setup(common_io);
-
-  #ifdef FOUR_RELAY
-    common_io[RELAY_ID_1].SetValues(RELAY_OFF, 2, RELAY_1);
-    common_io[RELAY_ID_2].SetValues(RELAY_OFF, 2, RELAY_2);
-    common_io[RELAY_ID_3].SetValues(RELAY_OFF, 2, RELAY_3);
-    common_io[RELAY_ID_4].SetValues(RELAY_OFF, 2, RELAY_4);
-  #endif
-  
-  // INPUT
-  #ifdef INPUT_1
-    #ifdef PULLUP_1
-      common_io[INPUT_ID_1].SetValues(RELAY_OFF, INVERT_1, 0, PIN_1);
-    #else
-      common_io[INPUT_ID_1].SetValues(RELAY_OFF, INVERT_1, 1, PIN_1);
-    #endif
-  #endif
-
-  #ifdef INPUT_2
-    #ifdef PULLUP_2
-      common_io[INPUT_ID_2].SetValues(RELAY_OFF, INVERT_2, 0, PIN_2);
-    #else
-      common_io[INPUT_ID_2].SetValues(RELAY_OFF, INVERT_2, 1, PIN_2);
-    #endif
-  #endif
-
-  #ifdef INPUT_3
-    #ifdef PULLUP_3
-      common_io[INPUT_ID_3].SetValues(RELAY_OFF, INVERT_3, 0, PIN_3);
-    #else
-      common_io[INPUT_ID_3].SetValues(RELAY_OFF, INVERT_3, 1, PIN_3);
-    #endif
-  #endif
-
-  #ifdef INPUT_4
-    #ifdef PULLUP_4
-      common_io[INPUT_ID_4].SetValues(RELAY_OFF, INVERT_4, 0, PIN_4);
-    #else
-      common_io[INPUT_ID_4].SetValues(RELAY_OFF, INVERT_4, 1, PIN_4);
-    #endif
-  #endif
-
-  // EXTERNAL THERMOMETER
-  #ifdef EXTERNAL_TEMP
-    #ifdef DHT22
-      pinMode(ET_PIN, INPUT);
-    #endif
-    #ifdef SHT30
-      Wire.begin();
-      sht.init();
-      sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM);
-    #endif
-  #endif
-
-}
-
-/**
- * @brief Presents module to the controller, send name, software version, info about sensors
- * 
- */
-void presentation() {
-
-  sendSketchInfo(SN, SV);
-
-  // OUTPUT
-  #ifdef DOUBLE_RELAY
-    present(RELAY_ID_1, S_BINARY, "Relay 1");   wait(PRESENTATION_DELAY);
-    present(RELAY_ID_2, S_BINARY, "Relay 2");   wait(PRESENTATION_DELAY);
-  #endif
-
-    if (roller_shutter.present()) {
-        wait(PRESENTATION_DELAY);
+    if (cfg::kPowerSensor) {
+        p.power.count = Device.power_channel_count();
+        for (uint8_t ch = 0; ch < p.power.count; ++ch) {
+            p.power.sensor[ch] = &CurrentSensors[ch];
+            p.power.id[ch] = p.power.count > 1 ? gw::ids::kPowerPerRelay[ch] : gw::ids::kPower;
+        }
     }
 
-    if (dimmer.present()) {
-        wait(PRESENTATION_DELAY);
-    }  
-
-  #ifdef FOUR_RELAY
-    present(RELAY_ID_1, S_BINARY, "Relay 1");   wait(PRESENTATION_DELAY);
-    present(RELAY_ID_2, S_BINARY, "Relay 2");   wait(PRESENTATION_DELAY);
-    present(RELAY_ID_3, S_BINARY, "Relay 3");   wait(PRESENTATION_DELAY);
-    present(RELAY_ID_4, S_BINARY, "Relay 4");   wait(PRESENTATION_DELAY);
-  #endif
-
-  // DIGITAL INPUT
-  #ifdef INPUT_1
-    present(INPUT_ID_1, S_BINARY, "Input 1");   wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef INPUT_2
-    present(INPUT_ID_2, S_BINARY, "Input 2");   wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef INPUT_3
-    present(INPUT_ID_3, S_BINARY, "Input 3");   wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef INPUT_4
-    present(INPUT_ID_4, S_BINARY, "Input 4");   wait(PRESENTATION_DELAY);
-  #endif
-
-  #ifdef SPECIAL_BUTTON
-    present(SPECIAL_BUTTON_ID, S_BINARY, "Longpress-1"); wait(PRESENTATION_DELAY);
-    present(SPECIAL_BUTTON_ID+1, S_BINARY, "Longpress-2"); wait(PRESENTATION_DELAY);
-  #endif
-
-  // POWER SENSOR
-  #if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
-    present(PS_ID, S_POWER, "Power Sensor");    wait(PRESENTATION_DELAY);
-  #elif defined(POWER_SENSOR) && defined(FOUR_RELAY)
-    present(PS_ID_1, S_POWER, "Power Sensor 1");    wait(PRESENTATION_DELAY);
-    present(PS_ID_2, S_POWER, "Power Sensor 2");    wait(PRESENTATION_DELAY);
-    present(PS_ID_3, S_POWER, "Power Sensor 3");    wait(PRESENTATION_DELAY);
-    present(PS_ID_4, S_POWER, "Power Sensor 4");    wait(PRESENTATION_DELAY);
-  #endif
-
-  // Internal Thermometer
-  #ifdef INTERNAL_TEMP
-    present(IT_ID, S_TEMP, "Internal Thermometer"); wait(PRESENTATION_DELAY);
-  #endif
-
-  // External Thermometer
-  #ifdef EXTERNAL_TEMP
-    present(ETT_ID, S_TEMP, "External Thermometer"); wait(PRESENTATION_DELAY);
-    present(ETH_ID, S_HUM, "External Hygrometer");  wait(PRESENTATION_DELAY);
-  #endif
-
-  // I2C
-
-
-  // Error Reporting
-  #ifdef ERROR_REPORTING
-    #ifdef POWER_SENSOR
-      present(ES_ID, S_BINARY, "OVERCURRENT ERROR");    wait(PRESENTATION_DELAY);
-    #endif
-    #ifdef INTERNAL_TEMP
-      present(TS_ID, S_BINARY, "THERMAL ERROR");    wait(PRESENTATION_DELAY);
-    #endif
-    #ifdef EXTERNAL_TEMP
-      present(ETS_ID, S_BINARY, "ET STATUS");   wait(PRESENTATION_DELAY);
-    #endif
-  #endif
-
-  #ifdef RS485_DEBUG
-    present(DEBUG_ID, S_INFO, "DEBUG INFO");
-  #endif
-
-  // Configuration sensor
-  present(CONFIGURATION_SENSOR_ID, S_INFO, "TEXT Msg");
-
-}
-
-/**
- * @brief Sends initial value of sensors as required by Home Assistant
- * 
- */
-void InitConfirmation() {
-
-  // OUTPUT
-  #ifdef DOUBLE_RELAY
-    send(MsgSTATUS.setSensor(RELAY_ID_1).set(common_io[RELAY_ID_1].NewState));
-    request(RELAY_ID_1, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-
-    send(MsgSTATUS.setSensor(RELAY_ID_2).set(common_io[RELAY_ID_2].NewState));
-    request(RELAY_ID_2, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-  #endif
-
-    roller_shutter.init_confirmation();
-    dimmer.init_confirmation();
-
-  #ifdef FOUR_RELAY
-    send(MsgSTATUS.setSensor(RELAY_ID_1).set(common_io[RELAY_ID_1].NewState));
-    request(RELAY_ID_1, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-    
-    send(MsgSTATUS.setSensor(RELAY_ID_2).set(common_io[RELAY_ID_2].NewState));
-    request(RELAY_ID_2, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-    
-    send(MsgSTATUS.setSensor(RELAY_ID_3).set(common_io[RELAY_ID_3].NewState));
-    request(RELAY_ID_3, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-    
-    send(MsgSTATUS.setSensor(RELAY_ID_4).set(common_io[RELAY_ID_4].NewState));
-    request(RELAY_ID_4, V_STATUS);
-    wait(2000, C_SET, V_STATUS);
-  #endif
-
-  // DIGITAL INPUT
-  #ifdef INPUT_1
-    send(MsgSTATUS.setSensor(INPUT_ID_1).set(common_io[INPUT_ID_1].NewState));
-  #endif
-
-  #ifdef INPUT_2
-    send(MsgSTATUS.setSensor(INPUT_ID_2).set(common_io[INPUT_ID_2].NewState));
-  #endif
-
-  #ifdef INPUT_3
-    send(MsgSTATUS.setSensor(INPUT_ID_3).set(common_io[INPUT_ID_3].NewState));
-  #endif
-
-  #ifdef INPUT_4
-    send(MsgSTATUS.setSensor(INPUT_ID_4).set(common_io[INPUT_ID_4].NewState));
-  #endif
-
-  #ifdef SPECIAL_BUTTON
-    send(MsgSTATUS.setSensor(SPECIAL_BUTTON_ID).set(0));
-    send(MsgSTATUS.setSensor(SPECIAL_BUTTON_ID+1).set(0));
-  #endif
-
-  // Built-in sensors
-  #ifdef POWER_SENSOR
-    #if !defined(FOUR_RELAY)
-      send(MsgWATT.setSensor(PS_ID).set("0"));
-    #elif defined(FOUR_RELAY)
-      for(int i=PS_ID_1; i<=PS_ID_4; i++)  {
-        send(MsgWATT.setSensor(i).set("0"));
-      }
-    #endif
-  #endif
-
-  #ifdef INTERNAL_TEMP
-    send(MsgTEMP.setSensor(IT_ID).set((int)AnalogTemp.MeasureT(ReadVcc())));
-  #endif
-
-  // External sensors
-  #ifdef EXTERNAL_TEMP
-    ETUpdate();
-  #endif
-
-  // Error Reporting
-  #ifdef ERROR_REPORTING
-    #ifdef POWER_SENSOR
-      send(MsgSTATUS.setSensor(ES_ID).set(0));
-    #endif
-    #ifdef INTERNAL_TEMP
-      send(MsgSTATUS.setSensor(TS_ID).set(0));
-    #endif
-    #ifdef EXTERNAL_TEMP
-      send(MsgSTATUS.setSensor(ETS_ID).set(0));
-    #endif
-  #endif
-
-  #ifdef RS485_DEBUG
-    send(MsgDEBUG.setSensor(DEBUG_ID).set("DEBUG MESSAGE"));
-  #endif
-
-  send(MsgTEXT.setSensor(CONFIGURATION_SENSOR_ID).set("CONFIG INIT"));
-
-  InitConfirm = true;
-}
-
-
-/**
- * @brief Handles incoming messages
- * 
- * @param message incoming message data
- */
-void receive(const MyMessage &message)  {
-  if (roller_shutter.handle_msg(message)) {
-    return;
-  }
-  if (dimmer.handle_msg(message)) {
-    return;
-  }
-  if (message.type == V_STATUS) {
-    #if defined(POWER_SENSOR) && defined(ERROR_REPORTING)
-      if (message.sensor == ES_ID)  {
-        for (int i = 0; i < 4; i++)  {
-          OVERCURRENT_ERROR[i] = message.getBool();
-        }
-        InformControllerES = false;
-      }
-    #endif
-    #if defined(INTERNAL_TEMP) && defined(ERROR_REPORTING)
-      if (message.sensor == TS_ID)  {
-        THERMAL_ERROR = message.getBool();
-        if (THERMAL_ERROR == false)  {
-          InformControllerTS = false;
-        }
-      }
-    #endif
-    #ifdef SPECIAL_BUTTON
-      if (message.sensor == SPECIAL_BUTTON_ID || message.sensor == SPECIAL_BUTTON_ID+1)  {
-        // Ignore this message
-      }
-    #endif
-    #if defined(DOUBLE_RELAY)
-      if (message.sensor == RELAY_ID_1 || message.sensor == RELAY_ID_2)  {
-        if (!OVERCURRENT_ERROR[0] && !THERMAL_ERROR) {
-          common_io[message.sensor].SetState(message.getBool());
-          common_io[message.sensor].SetRelay();
-        }
-      }
-    #endif
-    #ifdef FOUR_RELAY
-      if (message.sensor >= RELAY_ID_1 && message.sensor < NUMBER_OF_RELAYS) {
-        for (int i = RELAY_ID_1; i < RELAY_ID_1 + NUMBER_OF_RELAYS; i++) {
-          if (message.sensor == i) {
-            if (!OVERCURRENT_ERROR[i] && !THERMAL_ERROR) {
-              common_io[message.sensor].NewState = message.getBool();
-              common_io[message.sensor].SetRelay();
-            }
-          }
-        }
-      }
-    #endif
-  }
-  else if(message.type == V_TEXT) {
-    // Configuration by message
-    if(message.sensor == CONFIGURATION_SENSOR_ID)  {
-      
-      // Initialize strings and pointers
-      char ReceivedPayload[10];
-      char *RPaddr = ReceivedPayload;
-      String RPstr = String(message.getString());
-
-      // Turn String payload to char array and send back to the controller
-      RPstr.toCharArray(ReceivedPayload, 10);
-      send(MsgTEXT.setSensor(CONFIGURATION_SENSOR_ID).set(RPaddr));
-
-      if(RPstr.equals(CONF_MSG_1)) {
-          // Roller shutter: calibration
-          float Vcc = ReadVcc();
-          roller_shutter.calibrate(Vcc, PS);
-      }
-      else if(RPstr.equals(CONF_MSG_2)) {
-        // No effect
-      }
-      else if(RPstr.equals(CONF_MSG_3)) {
-        // Watchdog test procedure / module restart
-        delay(10000);
-      }
-      else if(RPstr.equals(CONF_MSG_4)) {
-        // Clear EEPROM and restart
-        for (int i=0;i<1024;i++) {
-          EEPROM.write(i,0xFF);
-        }
-        delay(10000);
-      }
+    if (cfg::kInternalTemperature) {
+        p.internal_temperature = &InternalTemperature;
     }
-  }
+
+#if defined(GW_PROBE_SHT30) || defined(GW_PROBE_DHT22)
+    p.external_probe = &ExternalTemperatureProbe;
+#endif
+
+    return p;
 }
 
-/**
- * @brief Reads temperature & humidity from an optional, external thermometer 
- * 
- */
-void ETUpdate()  {
+gw::Module Node(Device, Inputs, Bus, Clock, Store, Watchdog, Vref, make_peripherals(),
+                cfg::kFeatures, cfg::kTiming, cfg::kPower, cfg::kThermal, cfg::kStore);
 
-  #ifdef EXTERNAL_TEMP
-    #ifdef DHT22
-      int chk = DHT.read22(ET_PIN);
-      switch (chk)  {
-        case DHTLIB_OK:
-          send(MsgTEMP.setSensor(ETT_ID).setDestination(0).set(DHT.temperature, 1));
-          send(MsgHUM.setSensor(ETH_ID).set(DHT.humidity, 1));
-          #ifdef HEATING_SECTION_SENSOR
-            send(MsgTEMP.setSensor(ETT_ID).setDestination(MY_HEATING_CONTROLLER).set(DHT.temperature, 1));
-          #endif
-          #ifdef ERROR_REPORTING
-            if (ET_ERROR != 0) {
-              ET_ERROR = 0;
-              send(MsgSTATUS.setSensor(ETS_ID).set(ET_ERROR));
-            }
-          #endif
-        break;
-        case DHTLIB_ERROR_CHECKSUM:
-          #ifdef ERROR_REPORTING
-            ET_ERROR = 1;
-            send(MsgSTATUS.setSensor(ETS_ID).set(ET_ERROR));
-          #endif
-        break;
-        case DHTLIB_ERROR_TIMEOUT:
-          #ifdef ERROR_REPORTING
-            ET_ERROR = 2;
-            send(MsgSTATUS.setSensor(ETS_ID).set(ET_ERROR));
-          #endif
-        break;
-        default:
-          #ifdef ERROR_REPORTING
-            ET_ERROR = 3;
-            send(MsgSTATUS.setSensor(ETS_ID).set(ET_ERROR));
-          #endif
-        break;
-      }
-    #elif defined(SHT30)
-      if(sht.readSample())  {
-        send(MsgTEMP.setSensor(ETT_ID).setDestination(0).set(sht.getTemperature(), 1));
-        send(MsgHUM.setSensor(ETH_ID).set(sht.getHumidity(), 1));
-        #ifdef HEATING_SECTION_SENSOR
-          send(MsgTEMP.setSensor(ETT_ID).setDestination(MY_HEATING_CONTROLLER).set(sht.getTemperature(), 1));
-        #endif
-      }
-      else  {
-        #ifdef ERROR_REPORTING
-          ET_ERROR = 1;
-          send(MsgSTATUS.setSensor(ETS_ID).set(ET_ERROR));
-        #endif
-      }
-    #endif
-  #endif
-}
+// ---------------------------------------------------------------------------
+// MySensors entry points
+// ---------------------------------------------------------------------------
 
-/**
- * @brief Updates common_io class objects; reads inputs & set outputs
- * 
- */
-void UpdateIO() {
-
-  int FirstSensor = 0;
-  int Iterations = NUMBER_OF_RELAYS+NUMBER_OF_INPUTS;
-
-  if(Iterations <= 0)  return;
-
-  for (int i = FirstSensor; i < FirstSensor + Iterations; i++)  {
-    common_io[i].CheckInput(LONGPRESS_DURATION, DEBOUNCE_VALUE);
-
-    if (common_io[i].NewState == common_io[i].State)  continue;
-
-    switch(common_io[i].SensorType)  {
-      case 0:
-        // Door/window/button
-      case 1:
-        // Motion sensor
-        send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
-        common_io[i].State = common_io[i].NewState;
-        break;
-      case 2:
-        // Relay output
-        // Nothing to do here
-        break;
-      case 3:
-        // Button input
-        roller_shutter.update_io(common_io[i], i);
-        if (!dimmer.update_io(common_io[i], i)) {
-            continue;
-        }
-        break;
-      case 4:
-        // Button input + Relay output
-        if (common_io[i].NewState != 2)  {
-          if (OVERCURRENT_ERROR[0] || THERMAL_ERROR)  continue;
-
-          common_io[i].SetRelay();
-          send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
-        }
-        else if (common_io[i].NewState == 2)  {
-          #ifdef SPECIAL_BUTTON
-            uint8_t SensorID = i == 0 ? SPECIAL_BUTTON_ID : SPECIAL_BUTTON_ID+1;
-            send(MsgSTATUS.setSensor(SensorID).set(true));
-          #endif
-          
-          common_io[i].NewState = common_io[i].State;
-        }
-        break;
-      default:
-        // Nothing to do here
-        break;
+/// Runs before setup(); clears a watchdog reset left over from the last boot.
+void before()
+{
+    if (cfg::kWatchdog) {
+        wdt_reset();
+        MCUSR = 0;
+        wdt_disable();
     }
-  }
 }
 
-
-/**
- * @brief Informs controller about power sensor readings
- * 
- * @param Current current measured by sensor 
- * @param Sensor sensor ID if more than one sensor is attached
- */
-void PSUpdate(float Current, [[maybe_unused]] uint8_t Sensor = 0)  {
-
-  if(Current == 0 && PS.OldValue == 0)  return;
-  else if(Current < 1 && (abs(PS.OldValue - Current) < 0.1)) return;
-  else if(Current >= 1 && (abs(PS.OldValue - Current) < (0.1 * PS.OldValue))) return;
-  
-  #if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
-    send(MsgWATT.setSensor(PS_ID).set(PS.CalculatePower(Current, COSFI), 0));
-    PS.OldValue = Current;
-  #elif defined(POWER_SENSOR) && defined(FOUR_RELAY)
-    send(MsgWATT.setSensor(Sensor+4).set(PS[Sensor].CalculatePower(Current, COSFI), 0));
-    PS[Sensor].OldValue = Current;
-  #endif
-
+void setup()
+{
+#if defined(GW_PROBE_SHT30) || defined(GW_PROBE_DHT22)
+    ExternalTemperatureProbe.begin();
+#endif
+    Node.begin();
 }
 
-/**
- * @brief Measures uC supply voltage
- * 
- * @return long measured voltage in mV
- */
-long ReadVcc() {
-  
-  long result;
-  
-  // Read 1.1V reference against AVcc
-  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-  
-  delay(2);
-  
-  ADCSRA |= _BV(ADSC); // Convert
-  
-  while (bit_is_set(ADCSRA,ADSC));
-  
-  result = ADCL;
-  result |= ADCH<<8;
-  result = 1126400L / result; // Back-calculate AVcc in mV
-  result = result;
-  
-  return result;
+void presentation()
+{
+    Node.present(GW_TEXT(SN), GW_TEXT(SV));
 }
 
-/**
- * @brief main loop: calls all 'Update' functions, runs all measurements, checks if safety parameters are within limits
- * 
- */
-void loop() {
-
-  float Vcc = ReadVcc(); // mV
-  float Current = 0;
-
-  // Sending out states for the first time (as required by Home Assistant)
-  if (!InitConfirm)  {
-    InitConfirmation();
-  }
-
-  // Reading power sensor(s)
-  #if defined(POWER_SENSOR) && !defined(FOUR_RELAY)
-    #if defined(DOUBLE_RELAY) || defined(ROLLER_SHUTTER)
-      if (digitalRead(RELAY_1) == RELAY_ON || digitalRead(RELAY_2) == RELAY_ON)  {
-        Current = PS.MeasureAC(Vcc);
-      }
-    #endif
-        Current = dimmer.measure_current(Vcc, PS);
-      
-    #ifdef ERROR_REPORTING
-      OVERCURRENT_ERROR[0] = PS.ElectricalStatus(Current);
-    #endif
-    
-    PSUpdate(Current);
-
-  #elif defined(POWER_SENSOR) && defined(FOUR_RELAY)
-    for (int i = RELAY_ID_1; i < RELAY_ID_1 + NUMBER_OF_RELAYS; i++) {
-      if (common_io[i].State == RELAY_ON)  {
-        Current = PS[i].MeasureAC(Vcc);
-      }
-      else  {
-        Current = 0;
-      }
-      #ifdef ERROR_REPORTING
-        OVERCURRENT_ERROR[i] = PS[i].ElectricalStatus(Current);
-      #endif
-
-      PSUpdate(Current, i);
+void receive(const MyMessage& message)
+{
+    gw::InboundMessage decoded;
+    if (gw::decode(message, decoded)) {
+        Node.on_message(decoded);
     }
-  #endif
-
-  // Current safety
-  #if defined(ERROR_REPORTING) && defined(POWER_SENSOR)
-    #ifdef FOUR_RELAY
-      for (int i = RELAY_ID_1; i < RELAY_ID_1 + NUMBER_OF_RELAYS; i++)  {
-        if (OVERCURRENT_ERROR[i]) {
-          // Current to high
-          common_io[i].NewState = RELAY_OFF;
-          common_io[i].SetRelay();
-          send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
-          send(MsgSTATUS.setSensor(ES_ID).set(OVERCURRENT_ERROR[i]));
-          InformControllerES = true;
-        }
-        else if(!OVERCURRENT_ERROR[i] && InformControllerES) {
-          // Current normal (only after reporting error)
-          send(MsgSTATUS.setSensor(ES_ID).set(OVERCURRENT_ERROR[i]));
-          InformControllerES = false;
-        }
-      }
-    #else
-      if(OVERCURRENT_ERROR[0])  {
-        // Current to high
-        #ifdef DOUBLE_RELAY
-          for (int i = RELAY_ID_1; i < RELAY_ID_1 + NUMBER_OF_RELAYS; i++)  {
-            common_io[i].NewState = RELAY_OFF;
-            common_io[i].SetRelay();
-            send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
-          }
-        #else
-          roller_shutter.stop();
-          dimmer.alert();
-        #endif
-
-        send(MsgSTATUS.setSensor(ES_ID).set(OVERCURRENT_ERROR[0]));
-        InformControllerES = true;
-      }
-      else if(!OVERCURRENT_ERROR[0] && InformControllerES)  {
-        // Current normal (only after reporting error)
-        send(MsgSTATUS.setSensor(ES_ID).set(OVERCURRENT_ERROR[0]));
-        InformControllerES = false;
-      }
-    #endif
-  #endif
-
-  // Reading internal temperature sensor
-  #if defined(ERROR_REPORTING) && defined(INTERNAL_TEMP)
-    THERMAL_ERROR = AnalogTemp.ThermalStatus(AnalogTemp.MeasureT(Vcc));
-  #endif
-
-  // Thermal safety
-  #if defined(ERROR_REPORTING) && defined(INTERNAL_TEMP)
-    if (THERMAL_ERROR && !InformControllerTS) {
-    // Board temperature to high
-      #ifdef DOUBLE_RELAY
-        for (int i = RELAY_ID_1; i < RELAY_ID_1 + NUMBER_OF_RELAYS; i++)  {
-          common_io[i].NewState = RELAY_OFF;
-          common_io[i].SetRelay();
-          send(MsgSTATUS.setSensor(i).set(common_io[i].NewState));
-        }
-      #else
-        roller_shutter.stop();
-        dimmer.alert();
-      #endif
-      send(MsgSTATUS.setSensor(TS_ID).set(THERMAL_ERROR));
-      InformControllerTS = true;
-      CheckNow = true;
-    }
-    else if (!THERMAL_ERROR && InformControllerTS) {
-      send(MsgSTATUS.setSensor(TS_ID).set(THERMAL_ERROR));
-      InformControllerTS = false;
-    }
-  #endif
-
-  // Reading inputs / activating outputs
-  if (NUMBER_OF_RELAYS + NUMBER_OF_INPUTS > 0) {
-    UpdateIO();
-  }
-
-  // Updating roller shutter
-    roller_shutter.update(Current);
-    dimmer.update();
-
-  // Reset LastUpdate if millis() has overflowed
-  if(LastUpdate > millis()) {
-    LastUpdate = millis();
-  }  
-  
-  // Checking out sensors which report at a defined interval
-  if ((millis() > LastUpdate + INTERVAL) || CheckNow == true)  {
-    #ifdef INTERNAL_TEMP
-      send(MsgTEMP.setSensor(IT_ID).set((int)AnalogTemp.MeasureT(Vcc)));
-    #endif
-    #ifdef EXTERNAL_TEMP
-      ETUpdate();
-    #endif
-    LastUpdate = millis();
-    CheckNow = false;
-  }
-
-  wait(LOOP_TIME);
 }
+
+void loop()
+{
+    Node.loop();
+}
+
+/// Required because the sketch has pure virtual functions and the AVR toolchain
+/// does not provide this. Spinning lets the watchdog restart the node, which is
+/// the only sane response to a call through an uninitialised vtable.
+extern "C" void __cxa_pure_virtual()
+{
+    while (true) {
+    }
+}
+
 /*
-
-   EOF
-
-*/
+ * EOF
+ */

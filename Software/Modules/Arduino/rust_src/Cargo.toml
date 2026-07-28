@@ -1,0 +1,38 @@
+# `panic = "immediate-abort"` in [profile.release] is still unstable, hence the
+# opt-in. It is what strips the panic machinery on AVR; see the comment there.
+cargo-features = ["panic-immediate-abort"]
+
+[workspace]
+resolver = "2"
+members = ["crates/gowired-core", "crates/gowired-avr", "crates/gowired-firmware"]
+
+# `cargo test` at the workspace root must not try to build the AVR crates for
+# the host: gowired-avr is register-level ATmega328P code and gowired-firmware
+# is a #![no_main] binary. Both are built explicitly for avr-none instead --
+# see BUILDING.md, or just run tools/gowired-rs.py.
+default-members = ["crates/gowired-core"]
+
+[workspace.package]
+version = "3.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/GoWired/GoWired-Project"
+
+[profile.release]
+# opt-level = "s" beat "z" by ~200 B on this codebase: "z" refuses to inline
+# the one-line HAL accessors, and every un-inlined register write on AVR costs
+# more in call overhead than the inlined body.
+opt-level = "s"
+lto = true
+codegen-units = 1
+# "immediate-abort", not "abort": it also strips the panic *machinery* --
+# formatting, the location metadata, the unwinding tables -- so a panic becomes a
+# trap instruction. Worth well over 2 KB of flash on a 32 KB part, and there is
+# nowhere to print a panic message to anyway. Needs -Zbuild-std, which the
+# firmware crate's .cargo/config.toml turns on.
+panic = "immediate-abort"
+overflow-checks = false
+debug = true       # symbols only, stripped from the .hex; makes avr-nm useful
+
+[profile.dev]
+panic = "abort"

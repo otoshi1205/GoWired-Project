@@ -1,0 +1,8 @@
+# Host unit-test build tree (created by `cmake -S test -B build-test`,
+# or by `tools/gowired.py test`).
+build-test/
+
+# Firmware output, if you point `gowired.py build -o` here.
+build/
+
+__pycache__/

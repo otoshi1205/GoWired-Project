@@ -1,0 +1,44 @@
+{
+  "attic": {
+    "bootloader": "yes",
+    "device": "double_relay",
+    "dimming_interval_ms": 1,
+    "dimming_step": 1,
+    "down_time_s": 20,
+    "error_reporting": true,
+    "external_probe": "none",
+    "heating_controller_node": 0,
+    "inputs": [
+      {
+        "enabled": true,
+        "invert": false,
+        "pullup": true
+      },
+      {
+        "enabled": true,
+        "invert": false,
+        "pullup": true
+      },
+      {
+        "enabled": true,
+        "invert": false,
+        "pullup": true
+      },
+      {
+        "enabled": true,
+        "invert": false,
+        "pullup": true
+      }
+    ],
+    "internal_temperature": true,
+    "max_current_a": 3,
+    "mcu": "328p",
+    "mv_per_amp": 185,
+    "node_id": "AUTO",
+    "power_sensor": true,
+    "receiver_voltage": 230,
+    "sketch_name": "GoWired Module",
+    "sketch_version": "3.0",
+    "up_time_s": 21
+  }
+}

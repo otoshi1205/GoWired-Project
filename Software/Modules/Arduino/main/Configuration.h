@@ -1,327 +1,376 @@
 /*
- * Configuration.h file
- * Use this file for quick and easy configuration of your GetWired software.
- * For the whole description have a look at .ino file.
- * 
+ * Configuration.h
+ *
+ * Quick and easy configuration of your GoWired module. Edit the marked
+ * sections; everything below them is derived.
+ *
+ * Two kinds of setting live here and they are not interchangeable:
+ *
+ *   - MySensors transport settings must be #defines. They are that library's
+ *     configuration API: it reads them while <MySensors.h> is being included.
+ *
+ *   - Everything else is `constexpr`. These are ordinary C++ values, so the
+ *     compiler type-checks them, the unit tests can construct alternatives,
+ *     and a mistake such as two children sharing an id is a build error rather
+ *     than a device that silently misbehaves.
  */
 
 #ifndef Configuration_h
 #define Configuration_h
 
-/***** Protocol Definitions *****/
-// Identification
-#define MY_NODE_ID AUTO                       // Set node ID
-#define SN "GoWired Module"                   // Set node name to present to a controller
-#define SV "2.1"                            // Set sensor version
+#include <Arduino.h> // for the A0..A7 pin names used in the pin map below
 
-// Selecting transmission settings
-#define MY_RS485                              // Enable RS485 transport layer
-#define MY_RS485_DE_PIN 7                     // DE Pin definition
-#define MY_RS485_BAUD_RATE 57600              // Set RS485 baud rate
-#define MY_RS485_HWSERIAL Serial              // Enable Hardware Serial
-#define MY_RS485_SOH_COUNT 3                  // Collision avoidance
+#include "src/domain/config.h"
 
-// FOTA Feature
-#define MY_OTA_FIRMWARE_FEATURE                 // Enable OTA feature
+/* ===========================================================================
+ * 1. MySensors protocol settings  (must stay macros)
+ * ======================================================================== */
 
-// Other
-#define MY_TRANSPORT_WAIT_READY_MS 60000        // Time to wait for gateway to respond at startup (default 60000)
+// MY_NODE_ID -- unique per module. Two modules with the same id must not share a
+// gateway. AUTO lets the gateway assign one; the official instructions
+// recommend assigning it explicitly (e.g. 1) so the id survives a re-pairing.
+#define MY_NODE_ID AUTO
 
-/***** Quick Config *****/
-// Output Config - one of these has to be defined
-#define DOUBLE_RELAY              // Define this node as a double relay node, setting below
-//#define ROLLER_SHUTTER            // Define this node as a roller shutter node, setting below
-//#define FOUR_RELAY                // Define this node as a four relay node, setting below
-//#define DIMMER                    // Define this node as a 1-channel dimmer node, setting below
-//#define RGB                       // Define this node as a RGB dimmer node, setting below
-//#define RGBW                      // Define this node as a RGBW dimmer node, setting below
+#define SN "GoWired Module" // Sketch name presented to the controller
+#define SV "3.0"            // Sketch (firmware) version
 
-#if (defined(DOUBLE_RELAY) + defined(ROLLER_SHUTTER) + defined(FOUR_RELAY) + defined(DIMMER) + defined(RGB) + defined(RGBW)) != 1
-    #error "Exactly one of DOUBLE_RELAY, ROLLER_SHUTTER, FOUR_RELAY, DIMMER, RGB, or RGBW must be defined!"
-#endif
+#define MY_RS485                         // Enable RS485 transport layer
+#define MY_RS485_DE_PIN 7                // DE pin
+#define MY_RS485_BAUD_RATE 57600
+#define MY_RS485_HWSERIAL Serial
+#define MY_RS485_SOH_COUNT 3             // Collision avoidance
 
-// Input Config - define according to your needs
-// Digital Inputs
-#define INPUT_1
-#define INPUT_2
-#define INPUT_3
-#define INPUT_4
+#define MY_OTA_FIRMWARE_FEATURE          // FOTA updates
+#define MY_TRANSPORT_WAIT_READY_MS 60000  // Startup wait for the gateway
 
-// Board dependent
-#define POWER_SENSOR
-#define INTERNAL_TEMP
+/* ===========================================================================
+ * 2. Which board is this?  --  set GW_DEVICE to exactly one of these
+ * ======================================================================== */
 
-// External temperature sensor - define DHT22 or SHT30
-//#define EXTERNAL_TEMP
-#ifdef EXTERNAL_TEMP
-    //#define DHT22
-    #define SHT30
-#endif
+#define GW_DOUBLE_RELAY 1   // 2SSR shield, two independent relays
+#define GW_ROLLER_SHUTTER 2 // 2SSR shield driving one cover
+#define GW_FOUR_RELAY 3     // 4RelayDin shield
+#define GW_DIMMER 4         // single-colour dimmable LED strip
+#define GW_RGB 5            // RGB strip
+#define GW_RGBW 6           // RGBW strip
 
-/***** Pin Definitions *****/
-// OUTPUT [RELAY / RGBW]
-#define OUTPUT_PIN_1 5
-#define OUTPUT_PIN_2 9
-#define OUTPUT_PIN_3 6
-#define OUTPUT_PIN_4 10
+#define GW_DEVICE GW_DOUBLE_RELAY
 
-// INPUT [BUTTON / SENSOR]
-// General input
-#define INPUT_PIN_1 2             // default 2
-#define INPUT_PIN_2 3             // default 3
-#define INPUT_PIN_3 4             // default 4
-#define INPUT_PIN_4 A3              // default A3
+/* ===========================================================================
+ * 3. Optional peripherals
+ * ======================================================================== */
 
-// Analog input
-#define INPUT_PIN_5 A1              // default A1
-#define INPUT_PIN_6 A2              // default A2
-#define INPUT_PIN_7 A6              // default A6
-#define INPUT_PIN_8 A7              // default A7
+namespace cfg {
 
-// Protocols
-// 1-wire
-#define ONE_WIRE_PIN A0             // default A0
+constexpr bool kPowerSensor = true;
+constexpr bool kInternalTemperature = true;
+constexpr bool kExternalTemperature = false;
+constexpr bool kErrorReporting = true;
+constexpr bool kWatchdog = true;
 
-// I2C
-#define I2C_PIN_1 A4              // default A4
-#define I2C_PIN_2 A5              // default A5
+} // namespace cfg
 
-/***** Various Definitions *****/
-// General
-#define RELAY_ON HIGH                       // Pin state to turn the relays on (default HIGH)
-#define RELAY_OFF LOW                       // Pin state to turn the relays off (default LOW)
-#define LONGPRESS_DURATION 1000
-#define DEBOUNCE_VALUE 50
+// Which external probe is fitted. Uncomment exactly one when
+// kExternalTemperature is true, and install the matching library
+// (arduino-sht or DHTlib). These have to be macros: they select which
+// third-party header src/platform/external_probe.h includes.
+//#define GW_PROBE_SHT30
+//#define GW_PROBE_DHT22
 
-// Internal temperature sensor
-#define MVPERC 10                         // V per 1 degree celsius (default 10)
-#define ZEROVOLTAGE 500                     // Voltage output of temperature sensor (default 500)
-#define MAX_TEMPERATURE 85                  // Maximum temperature the module can have before reporting error (default 85)
+namespace cfg {
 
-// Power Sensor
-#define MAX_CURRENT 3                      // Maximum current the module can handle before reporting error (2SSR - 3; 4RelayDin - 10A or 16)
-#define POWER_MEASURING_TIME 20             // Current measuring takes this long (default 20)
-#define MVPERAMP 185                       // mV per 1A (default: 2SSR 185 mV/A; 4RelayDin 73.3 mV/A, RGBW 100 mV/A)
-#define RECEIVER_VOLTAGE 230                // 230V, 24V, 12V - values for power usage calculation, depends on the receiver
-#define COSFI 1                             // cos(fi) value for a given load: resistive load - 1, LED - 0.4 < cos(fi) < 0.99, fluorescent - 
-
-// Dimmer
-#define DIMMING_STEP 1                      // Size of dimming step, increase for faster, less smooth dimming (default 1)
-#define DIMMING_INTERVAL 1                  // Duration of dimming interval, increase for slower dimming (default 10)
-#define DIMMING_TOGGLE_STEP 20              // Value to increase dimming percentage when using wall switch
-
-// Roller Shutter 
-#define PS_OFFSET 0.2                     // Power sensor offset for roller shutter calibration (default 0.2)
-#define CALIBRATION_SAMPLES 1             // Number of calibration samples for roller shutter calibration (default 2)
-#define UP_TIME 21                        // Manually defined upward movement time in seconds (0-255)
-#define DOWN_TIME 20                      // Manually defined downward movement time in seconds (0-255)
-
-// Heating system section thermometer
-//#define HEATING_SECTION_SENSOR            // Define if this module if going to be a temperature sensor for a heating controller
-#ifdef HEATING_SECTION_SENSOR
-  #define MY_HEATING_CONTROLLER 1           // Node ID to which this module should report external temperature to
-#endif
-
-// Other
-#define INTERVAL 300000                    // Interval value for reporting readings of the sensors: temperature, power usage (default 300000)
-#define INIT_DELAY 200                       // A value to be multiplied by node ID value to obtain the time to wait during the initialization process
-#define PRESENTATION_DELAY 10       // Time (ms) to wait between subsequent presentation messages (default 10)
-#define LOOP_TIME 80                       // Main loop wait time (default 100)        
-
-/***** Output Config *****/
-// 2SSR DOUBLE_RELAY
-#ifdef DOUBLE_RELAY
-  #define RELAY_ID_1 0
-  #define RELAY_ID_2 1
-  #define RELAY_1 OUTPUT_PIN_1
-  #define RELAY_2 OUTPUT_PIN_2
-  #define BUTTON_1 INPUT_PIN_1
-  #define BUTTON_2 INPUT_PIN_2
-  #define NUMBER_OF_RELAYS 2
-#endif
-
-// Roller Shutter
-#ifdef ROLLER_SHUTTER
-  #define SHUTTER_ID 0
-  #define RELAY_ID_1 0
-  #define RELAY_1 OUTPUT_PIN_1
-  #define RELAY_2 OUTPUT_PIN_2
-  #define BUTTON_1 INPUT_PIN_1
-  #define BUTTON_2 INPUT_PIN_2
-  #define NUMBER_OF_RELAYS 2
-#endif
-
-// 4RelayDin 4 Relay Output
-#ifdef FOUR_RELAY
-  #define RELAY_ID_1 0
-  #define RELAY_ID_2 1
-  #define RELAY_ID_3 2
-  #define RELAY_ID_4 3
-  #define RELAY_1 OUTPUT_PIN_3
-  #define RELAY_2 OUTPUT_PIN_2
-  #define RELAY_3 OUTPUT_PIN_1
-  #define RELAY_4 OUTPUT_PIN_4
-  #define NUMBER_OF_RELAYS 4
-#endif
-
-// Dimmer / RGB / RGBW
-#ifdef DIMMER
-  #define DIMMER_ID 0
-  #define LED_PIN_1 OUTPUT_PIN_1
-  #define LED_PIN_2 OUTPUT_PIN_2
-  #define LED_PIN_3 OUTPUT_PIN_3
-  #define LED_PIN_4 OUTPUT_PIN_4
-  #define BUTTON_1 INPUT_PIN_1
-  #define BUTTON_2 INPUT_PIN_2
-  #define NUMBER_OF_CHANNELS 4
-#endif
-
-#ifdef RGB
-  #define DIMMER_ID 0
-  #define LED_PIN_1 OUTPUT_PIN_4
-  #define LED_PIN_2 OUTPUT_PIN_1
-  #define LED_PIN_3 OUTPUT_PIN_2
-  #define LED_PIN_4 OUTPUT_PIN_3
-  #define BUTTON_1 INPUT_PIN_1
-  #define BUTTON_2 INPUT_PIN_2
-  #define NUMBER_OF_CHANNELS 3
-#endif
-
-#ifdef RGBW
-  #define DIMMER_ID 0
-  #define LED_PIN_1 OUTPUT_PIN_4
-  #define LED_PIN_2 OUTPUT_PIN_1
-  #define LED_PIN_3 OUTPUT_PIN_2
-  #define LED_PIN_4 OUTPUT_PIN_3
-  #define BUTTON_1 INPUT_PIN_1
-  #define BUTTON_2 INPUT_PIN_2
-  #define NUMBER_OF_CHANNELS 4
-#endif
-
-#ifdef NUMBER_OF_RELAYS
-  #define FIRST_INPUT_ID NUMBER_OF_RELAYS
-#elif defined(NUMBER_OF_CHANNELS)
-  #define FIRST_INPUT_ID 2
-  #define NUMBER_OF_RELAYS 2
+#if defined(GW_PROBE_SHT30) || defined(GW_PROBE_DHT22)
+constexpr bool kProbeSelected = true;
 #else
-  #define NUMBER_OF_RELAYS 0
-  #define FIRST_INPUT_ID 0
+constexpr bool kProbeSelected = false;
 #endif
 
-/***** Input Config *****/
-// Digital input - define what inputs to use
-#ifdef INPUT_1
-  #define INPUT_ID_1 FIRST_INPUT_ID
-  #define PIN_1 INPUT_PIN_3
-  #define PULLUP_1 1
-  #define INVERT_1 false
+/// Node id to mirror external temperature to, or 0 to disable. Was
+/// HEATING_SECTION_SENSOR / MY_HEATING_CONTROLLER.
+constexpr uint8_t kHeatingControllerNode = 0;
+
+/* ===========================================================================
+ * 4. Tuning
+ * ======================================================================== */
+
+constexpr gw::ButtonTiming kButtons = {
+    /* longpress_ms */ 1000,
+    /* debounce_ms  */ 50,
+};
+
+constexpr gw::DimmerTuning kDimmer = {
+    /* step        */ 1,  // brightness units per interval; larger is faster, coarser
+    /* interval_ms */ 1,  // larger is slower
+    /* toggle_step */ 20, // wall-switch brightness increment
+};
+
+constexpr gw::ShutterTuning kShutter = {
+    /* up_time_s                 */ 21,
+    /* down_time_s               */ 20,
+    /* calibration_current_floor */ 0.2f,
+    /* calibration_samples       */ 1,
+};
+
+constexpr gw::PowerTuning kPower = {
+    /* max_current_a      */ 3,   // 2SSR 3 A; 4RelayDin 10 or 16 A
+    /* receiver_voltage   */ 230, // 230 / 24 / 12, per the load
+    /* cos_phi            */ 1.0f, // resistive 1; LED 0.4..0.99
+    /* measuring_time_ms  */ 20,
+    /* mv_per_amp         */ 185, // 2SSR 185; 4RelayDin 73; RGBW 100
+};
+
+constexpr gw::ThermalTuning kThermal = {
+    /* max_temperature_c */ 85,
+    /* mv_per_celsius    */ 10.0f,
+    /* zero_voltage_mv   */ 500.0f,
+};
+
+constexpr gw::Timing kTiming = {
+    /* report_interval_ms   */ 300000,
+    /* presentation_delay_ms*/ 10,
+    /* loop_time_ms         */ 80,
+    /* init_echo_timeout_ms */ 2000,
+};
+
+/// First EEPROM address this sketch may use; 0..511 belongs to MySensors.
+constexpr gw::StoreLayout kStore = {
+    /* shutter_down_time */ 512,
+    /* shutter_up_time   */ 513,
+    /* shutter_position  */ 514,
+    /* size              */ 1024,
+};
+
+/* ===========================================================================
+ * 5. Pin map  --  GoWired MCU v1.0 / ATmega328P
+ * ======================================================================== */
+
+// Outputs (relay / PWM)
+constexpr gw::Pin kOutput1 = 5;
+constexpr gw::Pin kOutput2 = 9;
+constexpr gw::Pin kOutput3 = 6;
+constexpr gw::Pin kOutput4 = 10;
+
+// Digital inputs
+constexpr gw::Pin kInput1 = 2;
+constexpr gw::Pin kInput2 = 3;
+constexpr gw::Pin kInput3 = 4;
+constexpr gw::Pin kInput4 = A3;
+
+// Analog inputs
+constexpr gw::Pin kInput5 = A1;
+constexpr gw::Pin kInput6 = A2;
+constexpr gw::Pin kInput7 = A6;
+constexpr gw::Pin kInput8 = A7;
+
+constexpr gw::Pin kOneWire = A0;
+constexpr gw::Pin kI2cSda = A4;
+constexpr gw::Pin kI2cScl = A5;
+
+/// Pin level that de-energises a relay.
+constexpr bool kRelayOffLevel = false; // LOW
+
+/* ===========================================================================
+ * 6. Derived  --  no need to edit below here
+ * ======================================================================== */
+
+constexpr gw::DeviceKind device_kind()
+{
+    switch (GW_DEVICE) {
+    case GW_ROLLER_SHUTTER:
+        return gw::DeviceKind::RollerShutter;
+    case GW_FOUR_RELAY:
+        return gw::DeviceKind::FourRelay;
+    case GW_DIMMER:
+        return gw::DeviceKind::Dimmer;
+    case GW_RGB:
+        return gw::DeviceKind::Rgb;
+    case GW_RGBW:
+        return gw::DeviceKind::Rgbw;
+    default:
+        return gw::DeviceKind::DoubleRelay;
+    }
+}
+
+constexpr gw::DeviceKind kDevice = device_kind();
+
+constexpr gw::ColorModel color_model()
+{
+    switch (kDevice) {
+    case gw::DeviceKind::Rgb:
+        return gw::ColorModel::Rgb;
+    case gw::DeviceKind::Rgbw:
+        return gw::ColorModel::Rgbw;
+    default:
+        return gw::ColorModel::White;
+    }
+}
+
+/// Relay pin ordering differs per shield because of how the boards are routed.
+constexpr gw::Pin relay_pin(uint8_t index)
+{
+    if (kDevice == gw::DeviceKind::FourRelay) {
+        switch (index) {
+        case 0:
+            return kOutput3;
+        case 1:
+            return kOutput2;
+        case 2:
+            return kOutput1;
+        default:
+            return kOutput4;
+        }
+    }
+    // 2SSR: relay 1 / shutter-up on OUT1, relay 2 / shutter-down on OUT2.
+    return index == 0 ? kOutput1 : kOutput2;
+}
+
+/// The RGB(W) shield routes the white channel to OUT4 and R/G/B to OUT1..3.
+constexpr gw::Pin led_pin(uint8_t index)
+{
+    if (kDevice == gw::DeviceKind::Dimmer) {
+        switch (index) {
+        case 0:
+            return kOutput1;
+        case 1:
+            return kOutput2;
+        case 2:
+            return kOutput3;
+        default:
+            return kOutput4;
+        }
+    }
+    switch (index) {
+    case 0:
+        return kOutput4;
+    case 1:
+        return kOutput1;
+    case 2:
+        return kOutput2;
+    default:
+        return kOutput3;
+    }
+}
+
+constexpr gw::Pin kButtonPin1 = kInput1;
+constexpr gw::Pin kButtonPin2 = kInput2;
+
+constexpr gw::Pin current_sense_pin(uint8_t channel)
+{
+    if (kDevice == gw::DeviceKind::FourRelay) {
+        switch (channel) {
+        case 0:
+            return kInput7;
+        case 1:
+            return kI2cScl;
+        case 2:
+            return kI2cSda;
+        default:
+            return kInput8;
+        }
+    }
+    // The dimmer shields use the other spare analog pin for current sensing,
+    // because their thermistor sits on A6.
+    return (kDevice == gw::DeviceKind::DoubleRelay || kDevice == gw::DeviceKind::RollerShutter)
+               ? kInput7
+               : kInput8;
+}
+
+constexpr gw::Pin kInternalTempPin =
+    (kDevice == gw::DeviceKind::DoubleRelay || kDevice == gw::DeviceKind::RollerShutter) ? kInput8
+                                                                                        : kInput7;
+
+constexpr gw::Pin input_pin(uint8_t index)
+{
+    switch (index) {
+    case 0:
+        return kInput3;
+    case 1:
+        return kInput4;
+    case 2:
+        return kInput5;
+    default:
+        return kInput6;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Digital inputs INPUT_1 .. INPUT_4
+ *
+ * Replaces the INPUT_n / PULLUP_n / INVERT_n macro triplets. All four may be
+ * active at once.
+ *
+ *   enabled  was: #define INPUT_n
+ *   pullup   was: #define PULLUP_n -- true for a dry contact switching to
+ *                 ground, false for a sensor that drives the line itself
+ *                 (the old "comment out PULLUP_n" variant)
+ *   invert    was: #define INVERT_n -- reverses the active level
+ *
+ * Each slot keeps its own child id whether enabled or not, so turning INPUT_2
+ * off does not renumber INPUT_3 and INPUT_4 under a controller already bound
+ * to them. Any combination is legal, including none.
+ * ------------------------------------------------------------------------ */
+
+struct InputSetting {
+    bool enabled;
+    bool pullup;
+    bool invert;
+};
+
+constexpr InputSetting kInputSettings[gw::kMaxInputs] = {
+    /* INPUT_1 */ {true, true, false},
+    /* INPUT_2 */ {true, true, false},
+    /* INPUT_3 */ {true, true, false},
+    /* INPUT_4 */ {true, true, false},
+};
+
+constexpr gw::InputPin generic_input(uint8_t index)
+{
+    return gw::InputPin{static_cast<gw::SensorId>(gw::first_input_id(kDevice) + index),
+                        input_pin(index),
+                        kInputSettings[index].enabled,
+                        kInputSettings[index].pullup,
+                        kInputSettings[index].invert};
+}
+
+constexpr gw::InputPin kInputs[gw::kMaxInputs] = {
+    generic_input(0),
+    generic_input(1),
+    generic_input(2),
+    generic_input(3),
+};
+
+constexpr gw::Features kFeatures = {
+    /* power_sensor           */ kPowerSensor,
+    /* internal_temperature   */ kInternalTemperature,
+    /* external_temperature   */ kExternalTemperature,
+    /* error_reporting        */ kErrorReporting,
+    /* special_button         */ gw::button_count(kDevice) > 0,
+    /* heating_controller_node*/ kHeatingControllerNode,
+};
+
+} // namespace cfg
+
+/* ===========================================================================
+ * 7. Build-time validation
+ * ======================================================================== */
+
+// The old macro chain silently aliased FOUR_RELAY's per-relay power sensors
+// (ids 4..7) onto its digital inputs. Now it cannot.
+static_assert(gw::ids_are_valid(cfg::kDevice, gw::enabled_input_mask(cfg::kInputs),
+                                cfg::kFeatures),
+              "Two children share a sensor id -- check kInputSettings and the enabled features");
+
+// The 4RelayDin shield has no thermistor: its analog pins are taken by the four
+// current sensors. This used to surface as 'IT_PIN was not declared'.
+static_assert(!(cfg::kDevice == gw::DeviceKind::FourRelay && cfg::kInternalTemperature),
+              "FOUR_RELAY has no internal thermometer; set kInternalTemperature = false");
+
+static_assert(!cfg::kExternalTemperature || cfg::kProbeSelected,
+              "kExternalTemperature is true but no probe is selected -- uncomment "
+              "GW_PROBE_SHT30 or GW_PROBE_DHT22");
+
+#if defined(GW_PROBE_SHT30) && defined(GW_PROBE_DHT22)
+#error "Define at most one of GW_PROBE_SHT30 / GW_PROBE_DHT22"
 #endif
 
-#ifdef INPUT_2
-  #define INPUT_ID_2 INPUT_ID_1+1
-  #define PIN_2 INPUT_PIN_4
-  #define PULLUP_2 1
-  #define INVERT_2 false
-#endif
-
-#ifdef INPUT_3
-  #define INPUT_ID_3 INPUT_ID_2+1
-  #define PIN_3 INPUT_PIN_5
-  #define PULLUP_3 1
-  #define INVERT_3 false
-#endif
-
-#ifdef INPUT_4
-  #define INPUT_ID_4 INPUT_ID_3+1
-  #define PIN_4 INPUT_PIN_6
-  #define PULLUP_4 1
-  #define INVERT_4 false
-#endif
-
-// Sum up the defined values
-#define NUMBER_OF_INPUTS (PULLUP_1 + PULLUP_2 + PULLUP_3 + PULLUP_4)
-
-// Special Button
-#ifdef BUTTON_1
-  #define SPECIAL_BUTTON
-  #define SPECIAL_BUTTON_ID 8
-#endif
-
-// ACS712 Power Sensor
-#ifdef POWER_SENSOR
-  #if defined(DOUBLE_RELAY) || defined(ROLLER_SHUTTER)
-    #define PS_ID SPECIAL_BUTTON_ID+2
-    #define PS_PIN INPUT_PIN_7
-  #elif defined(DIMMER) || defined(RGB) || defined(RGBW)
-    #define PS_ID SPECIAL_BUTTON_ID+2
-    #define PS_PIN INPUT_PIN_8
-  #elif defined(FOUR_RELAY)
-    #define PS_ID_1 4
-    #define PS_ID_2 5
-    #define PS_ID_3 6
-    #define PS_ID_4 7
-    #define PS_PIN_1 INPUT_PIN_7
-    #define PS_PIN_2 I2C_PIN_2
-    #define PS_PIN_3 I2C_PIN_1
-    #define PS_PIN_4 INPUT_PIN_8
-  #endif
-#endif
-
-// Analog Internal Thermometer (Disable for 4RelayDin)
-#ifdef INTERNAL_TEMP
-  #define IT_ID 11
-  #if defined(DOUBLE_RELAY) || defined(ROLLER_SHUTTER)
-    #define IT_PIN INPUT_PIN_8
-  #elif defined(DIMMER) || defined(RGB) || defined(RGBW)
-    #define IT_PIN INPUT_PIN_7
-  #endif
-#endif
-
-// 1wire external thermometer (e.g. DHT22)
-#ifdef EXTERNAL_TEMP
-  #define ETT_ID IT_ID+1
-  #define ETH_ID ETT_ID+1
-  #ifdef DHT22
-    #define ET_PIN ONE_WIRE_PIN
-  #endif
-#endif
-
-/***** Watchdog, Fuses, Errors, Debug *****/
-#define ENABLE_WATCHDOG 
-
-#define ERROR_REPORTING
-#ifdef ERROR_REPORTING
-  #ifdef POWER_SENSOR
-    #define ES_ID 15
-  #endif
-  #ifdef INTERNAL_TEMP
-    #define TS_ID ES_ID+1
-  #endif
-  #ifdef EXTERNAL_TEMP
-    #define ETS_ID TS_ID+1
-  #endif
-#endif
-
-//#define RS485_DEBUG
-#ifdef RS485_DEBUG
-  #define DEBUG_ID ETS_ID+1
-#endif
-
-/***** Configuration by message *****/
-#define CONFIGURATION_SENSOR_ID 20
-#define CONF_MSG_1 "cmd1"
-#define CONF_MSG_2 "cmd2"
-#define CONF_MSG_3 "cmd3"
-#define CONF_MSG_4 "cmd4"
-
-/***** EEPROM Definitions *****/
-#define SIZE_OF_BYTE 1
-#define EEPROM_OFFSET 512                         // First eeprom address to use (prior addresses are taken)
-#define EEA_SHUTTER_TIME_DOWN EEPROM_OFFSET                        // EEPROM address to save Shutter travel down time
-#define EEA_SHUTTER_TIME_UP EEA_SHUTTER_TIME_DOWN+SIZE_OF_BYTE     // EEPROM address to save Shutter travel up time
-#define EEA_SHUTTER_POSITION EEA_SHUTTER_TIME_UP+SIZE_OF_BYTE      // EEPROM address to save Shutter last known position
-
-#endif
-/*
-   EOF
-*/
+#endif // Configuration_h

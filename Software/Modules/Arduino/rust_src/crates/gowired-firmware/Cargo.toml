@@ -1,0 +1,43 @@
+[package]
+name = "gowired-firmware"
+description = "GoWired module firmware for the ATmega328P/328PB."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gowired-core = { path = "../gowired-core" }
+gowired-avr = { path = "../gowired-avr" }
+
+[features]
+# Exactly one device feature must be enabled. `tools/gowired-rs.py` does this for
+# you; by hand it is
+#
+#     cargo build --release --no-default-features --features device-double-relay
+#
+# Making DOUBLE_RELAY the default means a bare `cargo build` produces something
+# sensible, which is what `GW_DEVICE GW_DOUBLE_RELAY` did in Configuration.h.
+default = ["device-double-relay"]
+
+device-double-relay = []
+device-roller-shutter = []
+device-four-relay = []
+device-dimmer = []
+device-rgb = []
+device-rgbw = []
+
+# External temperature/humidity probe. At most one, and only with
+# `EXTERNAL_TEMPERATURE = true` in config.rs.
+probe-sht30 = ["gowired-avr/probe-sht30"]
+probe-dht22 = ["gowired-avr/probe-dht22"]
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_lossless = "allow"
+doc_markdown = "allow"
+# The loop also indexes a parallel array of child ids.
+needless_range_loop = "allow"
